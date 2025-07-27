@@ -1,0 +1,104 @@
+#!/bin/bash
+
+VERSION="1.0"
+AUTHOR="Cxfr4"
+INTERFACE="ligolo"
+
+# Colores
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+CYAN='\033[1;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # Sin color
+
+banner() {
+echo -e "${CYAN}"
+cat << "EOF"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   █████╗ ██╗   ██╗████████╗ █████╗  ██╗      ┃
+┃  ██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗██║      ┃
+┃  ███████║██║   ██║   ██║   ██║   ██║██║      ┃
+┃  ██╔══██║██║   ██║   ██║   ██║   ██║██║      ┃
+┃  ██║  ██║╚██████╔╝   ██║   ╚██████╔╝███████╗ ┃
+┃  ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚══════╝ ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+EOF
+echo -e "${CYAN}        AUTOLIGOLO  v${VERSION}${NC}"
+echo -e "${CYAN}        by ${GREEN}${AUTHOR}${NC}\n"
+}
+
+require_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[!] Este script debe ejecutarse como root (sudo).${NC}"
+        echo -e "${YELLOW}Ejemplo:${NC} sudo $0 $1"
+        exit 1
+    fi
+}
+
+cleanup() {
+    echo -e "\n${YELLOW}[!] Interrupción detectada. Saliendo limpiamente...${NC}"
+    exit 130
+}
+trap cleanup SIGINT
+
+usage() {
+    banner
+    echo -e "${YELLOW}Uso: autoligolo [enable|disable]${NC}"
+    echo -e "${CYAN}  enable   - Crea y configura la interfaz ligolo${NC}"
+    echo -e "${CYAN}  disable  - Elimina la interfaz y configuraciones ligolo${NC}"
+    echo -e ""
+    exit 1
+}
+
+enable_ligolo() {
+    # Usar el usuario original si se ejecuta con sudo
+    local LUSER="${SUDO_USER:-$USER}"
+    echo -ne "${GREEN}[?] ¿Qué rango de IP quieres usar? (ejemplo: 10.0.0.0/24): ${NC}"
+    read ip_range
+    echo -e "${GREEN}[*] Rango de IP seleccionado: ${ip_range}${NC}\n"
+
+    echo -e "${YELLOW}[!] Creando la interfaz tun '${INTERFACE}'...${NC}"
+    ip tuntap add user $LUSER mode tun $INTERFACE 2>/dev/null
+
+    echo -e "${YELLOW}[!] Eliminando rutas previas en tun0 (si existen)...${NC}"
+    ip route del $ip_range dev tun0 2>/dev/null
+
+    echo -e "${YELLOW}[!] Habilitando la interfaz '${INTERFACE}'...${NC}"
+    ip link set $INTERFACE up
+
+    echo -e "${YELLOW}[!] Añadiendo ruta $ip_range a '${INTERFACE}'...${NC}"
+    ip route add $ip_range dev $INTERFACE
+
+    echo -e "\n${GREEN}[OK] ¡Ligolo listo!${NC}\n"
+    echo -e "${CYAN}Máquina atacante:${NC}\n\t./proxy -selfcert -laddr 0.0.0.0:443"
+    echo -e "${CYAN}Máquina víctima:${NC}\n\t./agent -connect [IP]:443 -ignore-cert"
+}
+
+disable_ligolo() {
+    echo -ne "${GREEN}[?] ¿Qué rango de IP quieres eliminar de la ruta? (ejemplo: 10.0.0.0/24): ${NC}"
+    read ip_range
+    echo -e "${YELLOW}[*] Eliminando ruta $ip_range de '${INTERFACE}'...${NC}"
+    ip route del $ip_range dev $INTERFACE 2>/dev/null
+
+    echo -e "${YELLOW}[*] Bajando y eliminando interfaz '${INTERFACE}'...${NC}"
+    ip link set $INTERFACE down 2>/dev/null
+    ip tuntap del mode tun $INTERFACE 2>/dev/null
+
+    echo -e "${GREEN}[OK] Interfaz y rutas eliminadas.${NC}"
+}
+
+case "$1" in
+    enable)
+        require_sudo
+        banner
+        enable_ligolo
+        ;;
+    disable)
+        require_sudo
+        banner
+        disable_ligolo
+        ;;
+    *)
+        usage
+        ;;
+esac
